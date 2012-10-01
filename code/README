@@ -1,0 +1,5 @@
+Pathfinder Robot Simulator using A* with Manhattan Method heuristic.
+
+Usage: $ astar path/to/some/input_file
+
+
