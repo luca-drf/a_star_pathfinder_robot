@@ -2,12 +2,17 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <unistd.h>
+
+
+#define max(a,b) (a>b?a:b)
 
 using std::vector;
 using std::cout;
 using std::endl;
 using std::string;
 using std::ifstream;
+using std::reverse;
 
 size_t max_x, max_y;
 vector<string> map;
@@ -20,6 +25,7 @@ class Node
     int x;
     int y;
     int g;
+    int h;
     int f;
     bool closed;
     bool opened;
@@ -45,8 +51,14 @@ class Node
         void open() {opened = 1; closed = 0;}
         void block() {blocked = 1;}
 
-        void compute_f (const int & xG, const int & yG)
-        {f = g + (abs( xG - x ) + abs( yG - y ));}
+        void compute_h (const int & xG, const int & yG)
+        {h = abs( xG - x ) + abs( yG - y );}
+
+        void compute_f ()
+        {f = g + h;}
+
+        void update_h (const Node* goal)
+        {h = max( h, (goal->get_g() - g) );}
         
         void update_g (Node* C)
         {g = C->get_g();}
@@ -152,7 +164,8 @@ void node_map_clean ( vector< vector<Node*> > & node_map )
             *col = NULL;
 }
 
-void node_map_reset ( vector< vector<Node*> > & node_map )
+void node_map_reset ( vector< vector<Node*> > & node_map,
+                        Node* goal, bool adaptive )
 {
     vector< vector<Node*> >::iterator row;
     vector<Node*>::iterator col;
@@ -160,8 +173,13 @@ void node_map_reset ( vector< vector<Node*> > & node_map )
     for (row = node_map.begin(); row != node_map.end(); row++)
         for (col = row->begin(); col != row->end(); col++){
             if (*col != NULL && !((*col)->is_blocked())) {
-                delete *col;
-                *col = NULL;
+                if (adaptive && (*col)->is_closed()) {
+                    (*col)->update_h( goal );
+                }
+                else{
+                    delete *col;
+                    *col = NULL;
+                }
             }
         }
 }
@@ -246,7 +264,8 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
     cout << "A*" << endl;
     
     C = new Node( xS, yS, 0, NULL );
-    C->compute_f( xG, yG );
+    C->compute_h( xG, yG );
+    C->compute_f();
     open_list.push( C );
     cout << "Push: " << xS << " " << yS << endl;
     
@@ -256,6 +275,7 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
         // get the current node w/ the highest priority
         // from the list of open nodes
         C = open_list.pop();
+        C->close();
         xC = C->get_x();
         yC = C->get_y();
         cout << "Pop : " << xC << " " << yC << endl;
@@ -274,7 +294,6 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
         }
         cout << "Mark: " << xC << " " << yC << endl;
         node_map[xC][yC] = C;
-        C->close();
         if (C->is_closed()) cout << "Closed: " << xC << " " << yC << endl;
 
 
@@ -294,7 +313,8 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
                 cout << "Create: " << xN << " " << yN << endl;
 
 
-                N->compute_f( xG, yG );
+                N->compute_h( xG, yG );
+                N->compute_f();
                 N->open();
                 open_list.push( N );
                 cout << "Push: " << xN << " " << yN << endl;
@@ -312,7 +332,7 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
                 {
                     N->update_g(C);
                     N->update_p(C);
-                    N->compute_f( xG, yG );
+                    N->compute_f();
                     cout << "Update: " << xN << " " << yN << endl;
 
                     if (N->is_open()){
@@ -335,14 +355,68 @@ int main (int argc, char** argv)
     static int xG, yG, xS, yS, xN, yN, expanded_nodes;
     static bool goal = 0;
 
-    load_map( argv[1] );
+    bool adaptive = 0, rev;
+    char *input_file = NULL;
+    char *direction = NULL;
+    char *tie = NULL;
+    int index;
+    int c;
+    
+    opterr = 0;
+    
+    while ((c = getopt (argc, argv, "Ai:d:t:")) != -1)
+      switch (c)
+        {
+        case 'A':
+          adaptive = 1;
+          break;
+        case 'i':
+          input_file = optarg;
+          break;
+        case 'd':
+          direction = optarg;
+          break;
+        case 't':
+          tie = optarg;
+          break;
+        case '?':
+          if (optopt == 'c')
+            fprintf (stderr, "Option -%c requires an argument.\n", optopt);
+          else if (isprint (optopt))
+            fprintf (stderr, "Unknown option `-%c'.\n", optopt);
+          else
+            fprintf (stderr,
+                     "Unknown option character `\\x%x'.\n",
+                     optopt);
+          return 1;
+        default:
+          abort ();
+        }
+    
+    //printf ("adaptive = %d, input = %s, direction = %s, tie = %s\n",
+    //        adaptive, input_file, direction, tie);
+    
+    for (index = optind; index < argc; index++)
+      printf ("Non-option argument %s\n", argv[index]);
+
+    if (*direction == 'f') rev = 0;
+    else if (*direction == 'b') rev = 1;
+    else {
+        cout << "Please specify a search direction: {f|b}" << endl;
+        return 1;
+    }
+
+    //Remeber tie breaking criteria
+
+
+    load_map( input_file );
     static vector< vector<Node*> > node_map( max_x, vector<Node*>(max_y) );
     node_map_clean( node_map );
 
     print_map();
     find_s_g( xS, yS, xG, yG );
-    //cout << "Start: " << xS << " " << yS << endl
-    //     << "Goal: " << xG << " " << yG << endl;
+    cout << "Start: " << xS << " " << yS << endl
+         << "Goal: " << xG << " " << yG << endl;
 
     while (!goal)
     {
@@ -367,23 +441,31 @@ int main (int argc, char** argv)
             node_map[xN][yN]->block();
         }
     }
-
-        path = a_star( node_map, xS, yS, xG, yG );
+        if (!rev){
+            path = a_star( node_map, xS, yS, xG, yG );
+            reverse( path.begin(), path.end() );
+        }
+        else{
+            path = a_star( node_map, xG, yG, xS, yS );
         
+        }
+
         vector<Node*>::iterator i;
         for (i = path.begin(); i != path.end(); i++)
             cout << (*i)->get_x() << " " << (*i)->get_y() << endl;
-        
+
         if (path.size() == 0) {
             cout << "No path" << endl;
             break;
         }
+        
+        // Remember that for the reverse search the path is inverted
 
-        vector<Node*>::reverse_iterator rit;
-        for (rit = path.rbegin() + 1; rit != path.rend(); rit++)
+        vector<Node*>::iterator it;
+        for (it = path.begin() + 1; it != path.end(); it++)
         {
-            xN = (*rit)->get_x();
-            yN = (*rit)->get_y();
+            xN = (*it)->get_x();
+            yN = (*it)->get_y();
 
             if (map[xN].compare( yN, 1, "x" ) == 0)
             {
@@ -398,7 +480,7 @@ int main (int argc, char** argv)
                 yS = yN;
             }
         }
-        node_map_reset( node_map );
+        node_map_reset( node_map, node_map[xG][yG], adaptive );
     }
     garbage_collector( node_map );
     

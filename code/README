@@ -1,5 +1,9 @@
 Pathfinder Robot Simulator using A* with Manhattan Method heuristic.
 
-Usage: $ astar path/to/some/input_file
+Usage: $ ./astar -i path/to/some/input_file -d {f|b} -t {s|l} [-A]
+
+Where f and b indicates forward and backward search, respectively; s and
+l indicates tie-breaking in favor of smaller and larger g-values,
+respectively; and -A indicates running with Adaptive A*.
 
 
