@@ -3,7 +3,8 @@
 #include <string>
 #include <vector>
 #include <unistd.h>
-
+#include <algorithm>
+#include <time.h>
 
 #define max(a,b) (a>b?a:b)
 
@@ -16,6 +17,7 @@ using std::reverse;
 
 size_t max_x, max_y;
 vector<string> map;
+bool great, adaptive;
 short x_dir[4] = {0, 1, 0, -1};
 short y_dir[4] = {1, 0, -1, 0};
 
@@ -35,7 +37,7 @@ class Node
     public:
         Node () {}
         Node (int x, int y, int g, Node* parent)
-        : x(x), y(y), g(g), parent(parent), closed(0), opened(1), blocked(0) {}
+        : x(x), y(y), g(g), parent(parent), closed(0), opened(0), blocked(0) {}
 
         //~Node();
         int get_x() const {return x;}
@@ -50,6 +52,7 @@ class Node
         void close() {closed = 1; opened = 0;}
         void open() {opened = 1; closed = 0;}
         void block() {blocked = 1;}
+        void reset() {opened = 0; closed = 0;}
 
         void compute_h (const int & xG, const int & yG)
         {h = abs( xG - x ) + abs( yG - y );}
@@ -64,32 +67,38 @@ class Node
         {g = C->get_g();}
 
         void update_p (Node* C)
-        {parent = C->get_p();}
+        {parent = C;}
         
         vector<Node*> trace_path();
-
-        bool operator < (const Node & comp)
-        {
-            if (f != comp.get_f())
-                return f < comp.get_f();
-            else
-                return g > comp.get_g();
-        }
+        
 };
 
 vector<Node*> Node::trace_path()
 {
     vector<Node*> path;
-    
+    //cout << "Trace function" << endl;
+
     Node* tmp = this;
     path.push_back( tmp );
     
     while (tmp->parent != NULL)
     {
+        //cout << "Node: "<< tmp->get_x() << " " << tmp->get_y();
         tmp = tmp->parent;
+        //cout << " --> " << tmp->get_x() << " " << tmp->get_y() << endl;
         path.push_back( tmp );
     }
     return path;
+}
+
+bool min (const Node & a, const Node & b)
+{
+    if (a.get_f() != b.get_f())
+        return a.get_f() < b.get_f();
+    else if (great)
+        return a.get_g() > b.get_g();
+    else if (!great)
+        return a.get_g() < b.get_g();
 }
 
 
@@ -106,7 +115,7 @@ class Heap
         }
         void rebuild ();
         void push ( Node * element );
-        Node* pop ();
+        Node* top ();
         void make_empty() {current_size = 0;}
         bool is_empty() const {return current_size == 0;}
 
@@ -124,12 +133,12 @@ void Heap::push ( Node * element )
 {
     int hole = ++current_size;
 
-    for( ; hole > 1 && *(element) < *(tree[hole / 2]); hole /= 2 )
+    for( ; hole > 1 && min(*(element), *(tree[hole / 2])); hole /= 2 )
         tree[hole] = tree[hole / 2];
     tree[hole] = element;
 }
 
-Node* Heap::pop ()
+Node* Heap::top ()
 {
     Node* min = tree[1];
     tree[1] = tree[current_size--];
@@ -144,9 +153,9 @@ void Heap::percolate ( int pos )
 
     for( ; pos * 2 <= current_size; pos = child ) {
         child = pos * 2;
-        if( child != current_size && *(tree[child + 1]) < *(tree[child]) )
+        if( child != current_size && min(*(tree[child + 1]), *(tree[child]) ))
             child++;
-        if( *(tree[child]) < *tmp )
+        if( min(*(tree[child]), *tmp) )
             tree[pos] = tree[child];
         else
             break;
@@ -164,8 +173,7 @@ void node_map_clean ( vector< vector<Node*> > & node_map )
             *col = NULL;
 }
 
-void node_map_reset ( vector< vector<Node*> > & node_map,
-                        Node* goal, bool adaptive )
+void node_map_reset ( vector< vector<Node*> > & node_map, Node* goal)
 {
     vector< vector<Node*> >::iterator row;
     vector<Node*>::iterator col;
@@ -175,6 +183,7 @@ void node_map_reset ( vector< vector<Node*> > & node_map,
             if (*col != NULL && !((*col)->is_blocked())) {
                 if (adaptive && (*col)->is_closed()) {
                     (*col)->update_h( goal );
+                    (*col)->reset();
                 }
                 else{
                     delete *col;
@@ -250,9 +259,35 @@ void load_map ( const char* file )
     else cout << "Unable to read input file!" << endl;
 }
 
+void check_blocked_neighbours ( vector< vector<Node*> > & node_map,
+                                vector<string> & map, int & xN, int & yN,
+                                int xS, int yS)
+{
+    for (int d = 0; d < 4; d++)
+    {
+        //cout << "for" << endl;
+        xN = xS + x_dir[d];
+        yN = yS + y_dir[d];
+        
+        //cout << "Check: " << xN << " " << yN << endl;
+
+        if (xN >= max_x || yN >= max_y || xN < 0 || yN < 0) continue;
+
+        else if (map[xN].compare( yN, 1, "x" ) == 0)
+        {
+            if (node_map[xN][yN] == NULL){
+                //cout << "Create node: " << xN << " " << yN << endl;
+                node_map[xN][yN] = new Node (xN, yN, 0, NULL);
+            }
+            //cout << "Block node: " << xN << " " << yN << endl;
+            node_map[xN][yN]->block();
+        }
+    }
+}
+
 
 vector<Node*> a_star ( vector< vector<Node*> > & node_map, 
-                        int xS, int yS, int xG, int yG )
+                        int xS, int yS, int xG, int yG, int & expanded_nodes)
 {
     static Node *N;
     static Node *C;
@@ -261,28 +296,30 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
     static int xN, yN, xC, yC;
     static bool initial_state = 1;
 
-    cout << "A*" << endl;
+    //cout << "A*" << endl;
     
     C = new Node( xS, yS, 0, NULL );
     C->compute_h( xG, yG );
     C->compute_f();
+    C->open();
     open_list.push( C );
-    cout << "Push: " << xS << " " << yS << endl;
+    //cout << "Push: " << xS << " " << yS << endl;
     
     while (!open_list.is_empty())
     {
         //cout << "while" << endl;
         // get the current node w/ the highest priority
         // from the list of open nodes
-        C = open_list.pop();
+        C = open_list.top();
         C->close();
+        expanded_nodes++;
         xC = C->get_x();
         yC = C->get_y();
-        cout << "Pop : " << xC << " " << yC << endl;
+        //cout << "top : " << xC << " " << yC << endl;
         
         if (xC == xG && yC == yG)
         {
-            cout << "Trace path" << endl;
+            //cout << "Trace path" << endl;
             path = C->trace_path();
             
             // garbage collection
@@ -292,9 +329,9 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
             
             return path;
         }
-        cout << "Mark: " << xC << " " << yC << endl;
+        //cout << "Mark: " << xC << " " << yC << endl;
         node_map[xC][yC] = C;
-        if (C->is_closed()) cout << "Closed: " << xC << " " << yC << endl;
+        //if (C->is_closed()) cout << "Closed: " << xC << " " << yC << endl;
 
 
         // generate moves (child nodes) in all possible directions
@@ -302,7 +339,7 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
         {
             xN = xC + x_dir[d];
             yN = yC + y_dir[d];
-            cout << "Expand: " << xN << " " << yN << endl;
+            //cout << "Expand: " << xN << " " << yN << endl;
 
             if (xN >= max_x || yN >= max_y || xN < 0 || yN < 0) continue;
 
@@ -310,57 +347,63 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
             {
                 N = new Node(xN, yN, C->get_g() + 1, C );
                 node_map[xN][yN] = N;
-                cout << "Create: " << xN << " " << yN << endl;
-
-
+                //cout << "Create: " << xN << " " << yN << endl;
                 N->compute_h( xG, yG );
                 N->compute_f();
                 N->open();
                 open_list.push( N );
-                cout << "Push: " << xN << " " << yN << endl;
-
+                //cout << "Push: " << xN << " " << yN << endl;
             }
             else
             {
                 N = node_map[xN][yN];
 
                 if (N->is_blocked()) {
-                    cout << xN << " " << yN << " is blocked" << endl;
+                //    cout << xN << " " << yN << " is blocked" << endl;
                     continue;
                 }
-                else if (C->get_g() < N->get_g())
+                else if ((C->get_g() + 1 < N->get_g()) && N->is_open())
                 {
                     N->update_g(C);
                     N->update_p(C);
                     N->compute_f();
-                    cout << "Update: " << xN << " " << yN << endl;
+                    //cout << "Update: " << xN << " " << yN << endl;
 
-                    if (N->is_open()){
-                        cout << "Rebuild openlist" << endl;
+                    //if (N->is_open()){
+                        //cout << "Rebuild openlist" << endl;
                         open_list.rebuild();
-                    }
+                    //}
                 }
-                //else delete N;
+                else if (!(N->is_open() || N->is_closed()))
+                {
+                    N->open();
+                    N->update_g(C);
+                    N->update_p(C);
+                    N->compute_f();
+                    open_list.push( N );
+                }
             }
         }
-        //delete C;
     }
     return path;
 }
 
-
 int main (int argc, char** argv)
 {
     vector<Node*> path;
-    static int xG, yG, xS, yS, xN, yN, expanded_nodes;
+    vector<Node*>::iterator i;
+    
+    static int xG, yG, xS, yS, xN, yN, expanded_nodes = 0;
     static bool goal = 0;
 
-    bool adaptive = 0, rev;
+    bool rev;
     char *input_file = NULL;
     char *direction = NULL;
     char *tie = NULL;
     int index;
     int c;
+    int start, stop;
+
     
     opterr = 0;
     
@@ -398,94 +441,111 @@ int main (int argc, char** argv)
     
     for (index = optind; index < argc; index++)
       printf ("Non-option argument %s\n", argv[index]);
-
-    if (*direction == 'f') rev = 0;
-    else if (*direction == 'b') rev = 1;
+    
+    if (direction != NULL){
+        if (*direction == 'f') rev = 0;
+        else if (*direction == 'b') rev = 1;
+        else{
+            cout << "Wrong direction argument" << endl;
+            return 1;
+        }
+    }
     else {
-        cout << "Please specify a search direction: {f|b}" << endl;
+        cout << "Please specify a search direction: -d {f|b}" << endl;
         return 1;
     }
 
-    //Remeber tie breaking criteria
-
+    if (tie != NULL){
+        if (*tie == 's') great = 0;
+        else if (*tie == 'l') great = 1;
+        else{
+            cout << "Wrong tie-breaking argument" << endl;
+            return 1;
+        }
+    }
+    else {
+        cout << "Please specify a tie-breaking criteria: -t {s|l}" << endl;
+        return 1;
+    }
 
     load_map( input_file );
     static vector< vector<Node*> > node_map( max_x, vector<Node*>(max_y) );
     node_map_clean( node_map );
 
+    cout << "= Map =" << endl;
     print_map();
     find_s_g( xS, yS, xG, yG );
     cout << "Start: " << xS << " " << yS << endl
          << "Goal: " << xG << " " << yG << endl;
 
+    cout << "= Robot moves =" << endl;
+    
+    start = clock();
+
     while (!goal)
     {
 
-    for (int d = 0; d < 4; d++)
-    {
-        //cout << "for" << endl;
-        xN = xS + x_dir[d];
-        yN = yS + y_dir[d];
-        
-        cout << "Check: " << xN << " " << yN << endl;
+        check_blocked_neighbours( node_map, map, xN, yN, xS, yS );
 
-        if (xN >= max_x || yN >= max_y || xN < 0 || yN < 0) continue;
-
-        else if (map[xN].compare( yN, 1, "x" ) == 0)
-        {
-            if (node_map[xN][yN] == NULL){
-                cout << "Create node: " << xN << " " << yN << endl;
-                node_map[xN][yN] = new Node (xN, yN, 0, NULL);
-            }
-            cout << "Block node: " << xN << " " << yN << endl;
-            node_map[xN][yN]->block();
-        }
-    }
         if (!rev){
-            path = a_star( node_map, xS, yS, xG, yG );
+            path = a_star( node_map, xS, yS, xG, yG, expanded_nodes );
             reverse( path.begin(), path.end() );
         }
         else{
-            path = a_star( node_map, xG, yG, xS, yS );
+            path = a_star( node_map, xG, yG, xS, yS, expanded_nodes );
         
         }
 
-        vector<Node*>::iterator i;
-        for (i = path.begin(); i != path.end(); i++)
-            cout << (*i)->get_x() << " " << (*i)->get_y() << endl;
+        //for (i = path.begin(); i != path.end(); i++)
+        //    cout << (*i)->get_x() << " " << (*i)->get_y() << endl;
 
         if (path.size() == 0) {
-            cout << "No path" << endl;
+            cout << endl << "!! No path !!" << endl <<endl;
             break;
         }
         
-        // Remember that for the reverse search the path is inverted
 
-        vector<Node*>::iterator it;
-        for (it = path.begin() + 1; it != path.end(); it++)
+        for (i = path.begin() + 1; i != path.end(); i++)
         {
-            xN = (*it)->get_x();
-            yN = (*it)->get_y();
+            xN = (*i)->get_x();
+            yN = (*i)->get_y();
 
-            if (map[xN].compare( yN, 1, "x" ) == 0)
+            //if (map[xN].compare( yN, 1, "x" ) == 0)
+            if (node_map[xN][yN]->is_blocked())
             {
                 break;
             }
-            else if (xN == xG && yN == yG) goal = 1;
-
+            else if (xN == xG && yN == yG)
+            {
+                goal = 1;
+                cout << (*i)->get_x() << " " << (*i)->get_y() << endl;
+                
+            }
             else {
                 if (map[xN].compare( yN, 1, "s" ) != 0)
                     map[xN][yN] = 'o';
+                
+                cout << (*i)->get_x() << " " << (*i)->get_y() << endl;
+                
                 xS = xN;
                 yS = yN;
+                
+                check_blocked_neighbours( node_map, map, xN, yN, xS, yS );
             }
         }
-        node_map_reset( node_map, node_map[xG][yG], adaptive );
+        if (!goal)
+            node_map_reset( node_map, node_map[xG][yG]);
     }
+    stop = clock();
+    double elapsed_secs = (stop - start) / double(CLOCKS_PER_SEC)*1000;
+
     garbage_collector( node_map );
     
+    cout << "= Visited cells map =" << endl;
     print_map();
 
-
+    cout << "Expanded nodes: " << expanded_nodes << endl;
+    cout << "Time: " << elapsed_secs << " msec." << endl;
+    
     return 0;
 }
