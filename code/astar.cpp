@@ -1,10 +1,18 @@
+//**********************************************************************//
+// 10/11/2012                                                           //
+//                                                                      //
+// Pathfinder Robot Simulator using A* with Manhattan Method heuristic. //
+//                                                                      //
+// Luca Da Rin Fioretto ID: 800533544              ldarinfi@cs.nmsu.edu //
+//**********************************************************************//
+
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <vector>
 #include <unistd.h>
 #include <algorithm>
-#include <time.h>
+
 
 #define max(a,b) (a>b?a:b)
 
@@ -15,11 +23,11 @@ using std::string;
 using std::ifstream;
 using std::reverse;
 
-size_t max_x, max_y;
-vector<string> map;
-bool great, adaptive;
-short x_dir[4] = {0, 1, 0, -1};
-short y_dir[4] = {1, 0, -1, 0};
+size_t max_x, max_y;                // Grid dimensions.
+vector<string> map;                 // Real map.
+bool great, adaptive;               // Tie-breaking and AA* flags.
+short x_dir[4] = {0, 1, 0, -1};     // Directions coordinates to check
+short y_dir[4] = {1, 0, -1, 0};     // neighbours.
 
 
 class Node
@@ -39,7 +47,6 @@ class Node
         Node (int x, int y, int g, Node* parent)
         : x(x), y(y), g(g), parent(parent), closed(0), opened(0), blocked(0) {}
 
-        //~Node();
         int get_x() const {return x;}
         int get_y() const {return y;}
         int get_g() const {return g;}
@@ -59,12 +66,12 @@ class Node
 
         void compute_f ()
         {f = g + h;}
-
+        
         void update_h (const Node* goal)
         {h = max( h, (goal->get_g() - g) );}
         
         void update_g (Node* C)
-        {g = C->get_g();}
+        {g = C->get_g() + 1;}
 
         void update_p (Node* C)
         {parent = C;}
@@ -73,6 +80,8 @@ class Node
         
 };
 
+// Traces the path from a given node to the starting point of the
+// search.
 vector<Node*> Node::trace_path()
 {
     vector<Node*> path;
@@ -91,6 +100,9 @@ vector<Node*> Node::trace_path()
     return path;
 }
 
+// Order function for Node objects.
+// Also implement tie breaking criteria in favor of larger/smaller g's
+// decided by user.
 bool min (const Node & a, const Node & b)
 {
     if (a.get_f() != b.get_f())
@@ -101,7 +113,7 @@ bool min (const Node & a, const Node & b)
         return a.get_g() < b.get_g();
 }
 
-
+// Binary Heap to implement a priority queue.
 class Heap
 {
     vector<Node*> tree;
@@ -123,12 +135,14 @@ class Heap
         void percolate (int pos);
 };
 
+// Rebuilds the heap structure after a priority update
 void Heap::rebuild ()
 {
     for( int i = current_size / 2; i > 0; i-- )
         percolate( i );
 }
 
+// Push a Node* in the correct position in the tree.
 void Heap::push ( Node * element )
 {
     int hole = ++current_size;
@@ -138,6 +152,8 @@ void Heap::push ( Node * element )
     tree[hole] = element;
 }
 
+// Return a Node* to the top element of the list, then delete it from
+// the heap and recalculate the heap structure
 Node* Heap::top ()
 {
     Node* min = tree[1];
@@ -146,6 +162,7 @@ Node* Heap::top ()
     return min;
 }
 
+// Percolate an element down in the tree
 void Heap::percolate ( int pos )
 {
     int child;
@@ -163,6 +180,7 @@ void Heap::percolate ( int pos )
     tree[pos] = tmp;
 }
 
+// Initialize the node_map with NULL pointers.
 void node_map_clean ( vector< vector<Node*> > & node_map )
 {
     vector< vector<Node*> >::iterator row;
@@ -173,6 +191,10 @@ void node_map_clean ( vector< vector<Node*> > & node_map )
             *col = NULL;
 }
 
+// Reset the node_map.
+// All but the blocked nodes are deleted.
+// If the search is in adaptive mode, closed nodes will be updated
+// rather than deleted.
 void node_map_reset ( vector< vector<Node*> > & node_map, Node* goal)
 {
     vector< vector<Node*> >::iterator row;
@@ -193,6 +215,7 @@ void node_map_reset ( vector< vector<Node*> > & node_map, Node* goal)
         }
 }
 
+// Delete all the nodes in the map and set the pointers to NULL.
 void garbage_collector ( vector< vector<Node*> > & node_map )
 {
     vector< vector<Node*> >::iterator row;
@@ -207,6 +230,7 @@ void garbage_collector ( vector< vector<Node*> > & node_map )
         }
 }
 
+// Look for starting and goal point on the real map.
 void find_s_g ( int & xS, int & yS, int & xG, int & yG )
 {
     vector<string>::iterator line;
@@ -227,6 +251,7 @@ void find_s_g ( int & xS, int & yS, int & xG, int & yG )
     }
 }
 
+// Print real map.
 void print_map ()
 {
     vector<string>::iterator line;
@@ -235,7 +260,8 @@ void print_map ()
     cout << "___________________" << endl;
 }
 
-void load_map ( const char* file )
+// Load the real map from file and store it in map.
+bool load_map ( const char* file )
 {
     string line;
     char c;
@@ -255,10 +281,16 @@ void load_map ( const char* file )
             map.push_back( line );
         }
         input.close();
+        return 1;
     }
-    else cout << "Unable to read input file!" << endl;
+    else{
+        cout << "Unable to read input file!" << endl;
+        return 0;
+    }
 }
 
+// Checks weather the neighbours cells of a given position are free or
+// blocked and updates the node_map.
 void check_blocked_neighbours ( vector< vector<Node*> > & node_map,
                                 vector<string> & map, int & xN, int & yN,
                                 int xS, int yS)
@@ -270,7 +302,7 @@ void check_blocked_neighbours ( vector< vector<Node*> > & node_map,
         yN = yS + y_dir[d];
         
         //cout << "Check: " << xN << " " << yN << endl;
-
+        
         if (xN >= max_x || yN >= max_y || xN < 0 || yN < 0) continue;
 
         else if (map[xN].compare( yN, 1, "x" ) == 0)
@@ -285,9 +317,11 @@ void check_blocked_neighbours ( vector< vector<Node*> > & node_map,
     }
 }
 
-
+// A*/AA* search code.
+// Returns an Node* vector containing the shortest path to the goal
+// (based on the robot knowledge)
 vector<Node*> a_star ( vector< vector<Node*> > & node_map, 
-                        int xS, int yS, int xG, int yG, int & expanded_nodes)
+                        int xS, int yS, int xG, int yG, float & expanded_nodes)
 {
     static Node *N;
     static Node *C;
@@ -297,19 +331,24 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
     static bool initial_state = 1;
 
     //cout << "A*" << endl;
-    
+
+    // Create a new starting node
+    if (node_map[xS][yS] != NULL)
+        delete node_map[xS][yS];
     C = new Node( xS, yS, 0, NULL );
+    node_map[xS][yS] = C;
     C->compute_h( xG, yG );
     C->compute_f();
     C->open();
     open_list.push( C );
     //cout << "Push: " << xS << " " << yS << endl;
     
+    // A* main loop.
     while (!open_list.is_empty())
     {
         //cout << "while" << endl;
-        // get the current node w/ the highest priority
-        // from the list of open nodes
+        
+        // Get the top node from the open list and its position.
         C = open_list.top();
         C->close();
         expanded_nodes++;
@@ -317,24 +356,31 @@ vector<Node*> a_star ( vector< vector<Node*> > & node_map,
         yC = C->get_y();
         //cout << "top : " << xC << " " << yC << endl;
         
+        // If the expanded node is the goal, returns the path to the
+        // starting point then empty the open list.
         if (xC == xG && yC == yG)
         {
             //cout << "Trace path" << endl;
             path = C->trace_path();
             
-            // garbage collection
-            //delete C;
-            // empty the leftover nodes!!!
             open_list.make_empty();
             
             return path;
         }
         //cout << "Mark: " << xC << " " << yC << endl;
-        node_map[xC][yC] = C;
+        
+        // Else mark the node on the node_map.
+        //if (node_map[xC][yC] == NULL)
+        //    node_map[xC][yC] = C;
         //if (C->is_closed()) cout << "Closed: " << xC << " " << yC << endl;
 
 
-        // generate moves (child nodes) in all possible directions
+        // Check the neighbours of the current node (C).
+        // If the node does not exist, generate it and push it in the
+        // open list.
+        // Else if the neighbour is not an obstacle update g and p.
+        // Else if it contains information from a previous search (AA*
+        // only) update g, p and push it into the open list.
         for (int d = 0; d < 4; d++)
         {
             xN = xC + x_dir[d];
@@ -393,20 +439,22 @@ int main (int argc, char** argv)
     vector<Node*> path;
     vector<Node*>::iterator i;
     
-    static int xG, yG, xS, yS, xN, yN, expanded_nodes = 0;
+    static int xG, yG, xS, yS, xN, yN;
+    float expanded_nodes = 0, searches = 0;
     static bool goal = 0;
 
     bool rev;
     char *input_file = NULL;
     char *direction = NULL;
     char *tie = NULL;
+
     int index;
     int c;
-    int start, stop;
 
     
     opterr = 0;
     
+    // Command line parameters processing.
     while ((c = getopt (argc, argv, "Ai:d:t:")) != -1)
       switch (c)
         {
@@ -468,30 +516,35 @@ int main (int argc, char** argv)
         return 1;
     }
 
-    load_map( input_file );
+    // Load the real map from file.
+    if(!load_map( input_file )) return 1;
     static vector< vector<Node*> > node_map( max_x, vector<Node*>(max_y) );
     node_map_clean( node_map );
 
+    // Cool std output prints.
     cout << "= Map =" << endl;
     print_map();
     find_s_g( xS, yS, xG, yG );
-    cout << "Start: " << xS << " " << yS << endl
-         << "Goal: " << xG << " " << yG << endl;
+     cout << "Start: " << xS << " " << yS << endl
+          << "Goal: " << xG << " " << yG << endl;
 
     cout << "= Robot moves =" << endl;
     
-    start = clock();
-
+    // Main robot loop.
     while (!goal)
     {
-
+        // Look if there are obstacles around.
         check_blocked_neighbours( node_map, map, xN, yN, xS, yS );
 
+        // Forward search
         if (!rev){
+            searches++;
             path = a_star( node_map, xS, yS, xG, yG, expanded_nodes );
             reverse( path.begin(), path.end() );
         }
+        // Backward search
         else{
+            searches++;
             path = a_star( node_map, xG, yG, xS, yS, expanded_nodes );
         
         }
@@ -505,12 +558,15 @@ int main (int argc, char** argv)
         }
         
 
+        // Robot moves loop.
         for (i = path.begin() + 1; i != path.end(); i++)
         {
+            // Aquire coordinates of the following position.
             xN = (*i)->get_x();
             yN = (*i)->get_y();
 
-            //if (map[xN].compare( yN, 1, "x" ) == 0)
+            // If the cell is the goal, stay put and report the success.
+            // If the cell is not blocked by obstacles, move into it.
             if (node_map[xN][yN]->is_blocked())
             {
                 break;
@@ -518,34 +574,45 @@ int main (int argc, char** argv)
             else if (xN == xG && yN == yG)
             {
                 goal = 1;
-                cout << (*i)->get_x() << " " << (*i)->get_y() << endl;
+                // cout << (*i)->get_x() << " " << (*i)->get_y() << endl;
                 
             }
             else {
                 if (map[xN].compare( yN, 1, "s" ) != 0)
                     map[xN][yN] = 'o';
                 
+                // Print out your movements.
                 cout << (*i)->get_x() << " " << (*i)->get_y() << endl;
                 
                 xS = xN;
                 yS = yN;
                 
+                // Meanwhile you move check if there are obstacles along
+                // the path.
                 check_blocked_neighbours( node_map, map, xN, yN, xS, yS );
             }
         }
+        // If the current cell is not the goal reset the node_map.
+        // If an A* search is performed, this means, erase all nodes
+        // informations but the obstacles.
+        // If an AA* search is performed, leave the information about
+        // the closed nodes and update their euristic.
         if (!goal)
             node_map_reset( node_map, node_map[xG][yG]);
     }
-    stop = clock();
-    double elapsed_secs = (stop - start) / double(CLOCKS_PER_SEC)*1000;
-
+    // When the robot has finished his work delete all the remains
+    // nodes.
     garbage_collector( node_map );
     
+    // Other cool std output prints.
     cout << "= Visited cells map =" << endl;
     print_map();
 
+    cout << "Grid dimensions: " << max_x << " x " << max_y << endl;
     cout << "Expanded nodes: " << expanded_nodes << endl;
-    cout << "Time: " << elapsed_secs << " msec." << endl;
-    
+    cout << "Searches: " << searches << endl;
+    cout << "Ratio: " << expanded_nodes / searches << endl;
+
     return 0;
 }
+
