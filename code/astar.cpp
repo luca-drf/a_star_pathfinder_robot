@@ -3,7 +3,7 @@
 //                                                                      //
 // Pathfinder Robot Simulator using A* with Manhattan Method heuristic. //
 //                                                                      //
-// Luca Da Rin Fioretto ID: 800533544              ldarinfi@cs.nmsu.edu //
+// Luca Da Rin Fioretto                            ldarinfi@cs.nmsu.edu //
 //**********************************************************************//
 
 #include <iostream>
